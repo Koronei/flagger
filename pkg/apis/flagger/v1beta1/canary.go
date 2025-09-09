@@ -146,6 +146,11 @@ type CanaryService struct {
 	// PortDiscovery adds all container ports to the generated Kubernetes service
 	PortDiscovery bool `json:"portDiscovery"`
 
+	// Headless if set to true, generates headless Kubernetes services.
+	// ref: https://kubernetes.io/docs/concepts/services-networking/service/#headless-services
+	// +optional
+	Headless bool `json:"headless,omitempty"`
+
 	// Timeout of the HTTP or gRPC request
 	// +optional
 	Timeout string `json:"timeout,omitempty"`
@@ -290,6 +295,9 @@ type SessionAffinity struct {
 	// The default value is 86,400 seconds, i.e. a day.
 	// +optional
 	MaxAge int `json:"maxAge,omitempty"`
+	// PrimaryCookieName is the key that will be used for the primary session affinity cookie.
+	// +optional
+	PrimaryCookieName string `json:"primaryCookieName,omitempty"`
 }
 
 // CanaryMetric holds the reference to metrics used for canary analysis
@@ -398,6 +406,10 @@ type CanaryWebhook struct {
 	// Number of retries for this webhook
 	// +optional
 	Retries int `json:"retries,omitempty"`
+
+	// Disable TLS verification for this webhook
+	// +optional
+	DisableTLS bool `json:"disableTLS,omitempty"`
 }
 
 // CanaryWebhookPayload holds the deployment info and metadata sent to webhooks
@@ -452,6 +464,14 @@ type LocalObjectReference struct {
 
 	// Name of the referent
 	Name string `json:"name"`
+}
+
+func (l *LocalObjectReference) IsKnativeService() bool {
+	if l.Kind == "Service" && l.APIVersion == "serving.knative.dev/v1" {
+		return true
+	}
+
+	return false
 }
 
 type AutoscalerRefernce struct {

@@ -80,7 +80,6 @@ spec:
               type: object
               required:
                 - targetRef
-                - service
                 - analysis
               properties:
                 provider:
@@ -129,9 +128,11 @@ spec:
                       type: object
                       properties:
                         minReplicas:
-                          type: number
+                          type: integer
+                          minimum: 1
                         maxReplicas:
-                          type: number
+                          type: integer
+                          minimum: 1
                 ingressRef:
                   description: Ingress selector
                   type: object
@@ -195,6 +196,9 @@ spec:
                       x-kubernetes-int-or-string: true
                     portDiscovery:
                       description: Enable port dicovery
+                      type: boolean
+                    headless:
+                      description: Headless if set to true, generates headless Kubernetes services.
                       type: boolean
                     timeout:
                       description: HTTP or gRPC request timeout
@@ -1135,6 +1139,9 @@ spec:
                           retries:
                             description: Number of retries for this webhook
                             type: number
+                          disableTLS:
+                            description: Disable TLS verification for this webhook
+                            type: boolean
                           metadata:
                             description: Metadata (key-value pairs) for this webhook
                             type: object
@@ -1146,6 +1153,9 @@ spec:
                       required: [ "cookieName" ]
                       properties:
                         cookieName:
+                          description: CookieName is the key that will be used for the session affinity cookie.
+                          type: string
+                        primaryCookieName:
                           description: CookieName is the key that will be used for the session affinity cookie.
                           type: string
                         maxAge:
@@ -1299,9 +1309,17 @@ spec:
                         - graphite
                         - dynatrace
                         - keptn
+                        - splunk
                     address:
                       description: API address of this provider
                       type: string
+                    headers:
+                      description: Headers to add to HTTP(S) requests
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          type: string
                     secretRef:
                       description: Kubernetes secret reference containing the provider credentials
                       type: object

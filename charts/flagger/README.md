@@ -114,6 +114,15 @@ $ helm upgrade -i flagger flagger/flagger \
     --set meshProvider=traefik
 ```
 
+If you need to add labels to the flagger deployment or pods, you can pass the labels as parameters as shown below.
+
+```console
+helm upgrade -i flagger flagger/flagger \
+<other parameters> \
+--set podLabels.<labelName>=<labelValue> \
+--set deploymentLabels.<labelName>=<labelValue> 
+```
+
 The [configuration](#configuration) section lists the parameters that can be configured during installation.
 
 ## Uninstalling the Chart
@@ -157,6 +166,7 @@ The following tables lists the configurable parameters of the Flagger chart and 
 | `podMonitor.namespace`               | Namespace where the PodMonitor is created                                                                                                          | the same namespace                    |
 | `podMonitor.interval`                | Interval at which metrics should be scraped                                                                                                        | `15s`                                 |
 | `podMonitor.podMonitor`              | Additional labels to add to the PodMonitor                                                                                                         | `{}`                                  |
+| `podMonitor.honorLabels`             | If `true`, label conflicts are resolved by keeping label values from the scraped data and ignoring the conflicting server-side labels              | `false`                               |
 | `leaderElection.enabled`             | If `true`, Flagger will run in HA mode                                                                                                             | `false`                               |
 | `leaderElection.replicaCount`        | Number of replicas                                                                                                                                 | `1`                                   |
 | `serviceAccount.create`              | If `true`, Flagger will create service account                                                                                                     | `true`                                |
@@ -185,6 +195,8 @@ The following tables lists the configurable parameters of the Flagger chart and 
 | `podDisruptionBudget.minAvailable`   | The minimal number of available replicas that will be set in the PodDisruptionBudget                                                               | `1`                                   |
 | `noCrossNamespaceRefs`               | If `true`, cross namespace references to custom resources will be disabled                                                                         | `false`                               |
 | `namespace`                          | When specified, Flagger will restrict itself to watching Canary objects from that namespace                                                        | `""`                                  |
+| `deploymentLabels`                   | Labels to add to Flagger deployment                                                                                                                | `{}`                                  |
+| `podLabels`                          | Labels to add to pods of Flagger deployment                                                                                                        | `{}`                                  |
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm upgrade`. For example,
 

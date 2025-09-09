@@ -20,12 +20,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
-	flaggerv1 "github.com/fluxcd/flagger/pkg/apis/flagger/v1beta1"
-	"github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1beta1"
-	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
-	clientset "github.com/fluxcd/flagger/pkg/client/clientset/versioned"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.uber.org/zap"
@@ -33,6 +30,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+
+	flaggerv1 "github.com/fluxcd/flagger/pkg/apis/flagger/v1beta1"
+	"github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1beta1"
+	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
+	clientset "github.com/fluxcd/flagger/pkg/client/clientset/versioned"
 )
 
 var (
@@ -161,6 +163,7 @@ func (gwr *GatewayAPIV1Beta1Router) Reconcile(canary *flaggerv1.Canary) error {
 		}
 		gwr.logger.With("canary", fmt.Sprintf("%s.%s", canary.Name, canary.Namespace)).
 			Infof("HTTPRoute %s.%s created", route.GetName(), hrNamespace)
+		return nil
 	} else if err != nil {
 		return fmt.Errorf("HTTPRoute %s.%s get error: %w", apexSvcName, hrNamespace, err)
 	}
@@ -198,16 +201,26 @@ func (gwr *GatewayAPIV1Beta1Router) Reconcile(canary *flaggerv1.Canary) error {
 	}
 
 	if httpRoute != nil {
+		// Preserve the existing annotations added by other controllers such as AWS Gateway API Controller.
+		mergedAnnotations := newMetadata.Annotations
+		for key, val := range httpRoute.Annotations {
+			if _, ok := mergedAnnotations[key]; !ok {
+				mergedAnnotations[key] = val
+			}
+		}
+
+		// Compare the existing HTTPRoute spec and metadata with the desired state.
+		// If there are differences, update the HTTPRoute object.
 		specDiff := cmp.Diff(
 			httpRoute.Spec, httpRouteSpec,
 			ignoreCmpOptions...,
 		)
 		labelsDiff := cmp.Diff(newMetadata.Labels, httpRoute.Labels, cmpopts.EquateEmpty())
-		annotationsDiff := cmp.Diff(newMetadata.Annotations, httpRoute.Annotations, cmpopts.EquateEmpty())
+		annotationsDiff := cmp.Diff(mergedAnnotations, httpRoute.Annotations, cmpopts.EquateEmpty())
 		if (specDiff != "" && httpRoute.Name != "") || labelsDiff != "" || annotationsDiff != "" {
 			hrClone := httpRoute.DeepCopy()
 			hrClone.Spec = httpRouteSpec
-			hrClone.ObjectMeta.Annotations = newMetadata.Annotations
+			hrClone.ObjectMeta.Annotations = mergedAnnotations
 			hrClone.ObjectMeta.Labels = newMetadata.Labels
 			_, err := gwr.gatewayAPIClient.GatewayapiV1beta1().HTTPRoutes(hrNamespace).
 				Update(context.TODO(), hrClone, metav1.UpdateOptions{})
@@ -608,6 +621,18 @@ func (gwr *GatewayAPIV1Beta1Router) mergeMatchConditions(analysis, service []v1b
 	return merged
 }
 
+func sortFiltersV1beta1(headers []v1beta1.HTTPHeader) {
+
+	if headers != nil {
+		slices.SortFunc(headers, func(a, b v1beta1.HTTPHeader) int {
+			if a.Name == b.Name {
+				return strings.Compare(a.Value, b.Value)
+			}
+			return strings.Compare(string(a.Name), string(b.Name))
+		})
+	}
+}
+
 func (gwr *GatewayAPIV1Beta1Router) makeFilters(canary *flaggerv1.Canary) []v1beta1.HTTPRouteFilter {
 	var filters []v1beta1.HTTPRouteFilter
 
@@ -624,12 +649,14 @@ func (gwr *GatewayAPIV1Beta1Router) makeFilters(canary *flaggerv1.Canary) []v1be
 					Value: val,
 				})
 			}
+			sortFiltersV1beta1(requestHeaderFilter.RequestHeaderModifier.Add)
 			for name, val := range canary.Spec.Service.Headers.Request.Set {
 				requestHeaderFilter.RequestHeaderModifier.Set = append(requestHeaderFilter.RequestHeaderModifier.Set, v1beta1.HTTPHeader{
 					Name:  v1beta1.HTTPHeaderName(name),
 					Value: val,
 				})
 			}
+			sortFiltersV1beta1(requestHeaderFilter.RequestHeaderModifier.Set)
 
 			for _, name := range canary.Spec.Service.Headers.Request.Remove {
 				requestHeaderFilter.RequestHeaderModifier.Remove = append(requestHeaderFilter.RequestHeaderModifier.Remove, name)
@@ -649,12 +676,14 @@ func (gwr *GatewayAPIV1Beta1Router) makeFilters(canary *flaggerv1.Canary) []v1be
 					Value: val,
 				})
 			}
+			sortFiltersV1beta1(responseHeaderFilter.ResponseHeaderModifier.Add)
 			for name, val := range canary.Spec.Service.Headers.Response.Set {
 				responseHeaderFilter.ResponseHeaderModifier.Set = append(responseHeaderFilter.ResponseHeaderModifier.Set, v1beta1.HTTPHeader{
 					Name:  v1beta1.HTTPHeaderName(name),
 					Value: val,
 				})
 			}
+			sortFiltersV1beta1(responseHeaderFilter.ResponseHeaderModifier.Set)
 
 			for _, name := range canary.Spec.Service.Headers.Response.Remove {
 				responseHeaderFilter.ResponseHeaderModifier.Remove = append(responseHeaderFilter.ResponseHeaderModifier.Remove, name)

@@ -168,7 +168,7 @@ func (c *Controller) advanceCanary(name string, namespace string) {
 		msg := "skipping canary run as object is suspended"
 		c.logger.With("canary", fmt.Sprintf("%s.%s", name, namespace)).
 			Debug(msg)
-		c.recordEventInfof(cd, msg)
+		c.recordEventInfof(cd, "%s", msg)
 		return
 	}
 
@@ -179,7 +179,7 @@ func (c *Controller) advanceCanary(name string, namespace string) {
 	}
 
 	// init controller based on target kind
-	canaryController := c.canaryFactory.Controller(cd.Spec.TargetRef.Kind)
+	canaryController := c.canaryFactory.Controller(cd.Spec.TargetRef)
 
 	labelSelector, labelValue, ports, err := canaryController.GetMetadata(cd)
 	if err != nil {

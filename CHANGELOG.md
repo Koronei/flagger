@@ -2,6 +2,171 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.41.0
+
+**Release date:** 2025-04-02
+
+This release comes with major features and minor bug fixes.
+
+Flagger now supports Knative as a networking provider. This works a bit
+differently than compared to other service meshes/ingresses. Flagger does not
+generate any Kubernetes objects. It instead modifies the Knative service itself
+to configure weighted traffic routing. To learn more, please see the [tutorial](https://docs.flagger.app/tutorials/knative-progressive-delivery).
+
+The session affinity canary release strategy has also been improved. Flagger can
+now configure Gateway API HTTPRoutes to also set a cookie for the primary
+deployment's response. For more info, see the [strategy docs](https://docs.flagger.app/usage/deployment-strategies#canary-release-with-session-affinity).
+
+Furthermore, there's a new `.spec.service.headless` field which when set to
+true, tells Flagger to generate headless Kubernetes services. Also, support has
+been added for adding headers to the request Flagger sends to Prometheus for
+collecting metrics during an analysis via the `.spec.headers` field in the
+`MetricTemplate` object.
+
+Finally, both Flagger and the load tester have been updated to use Go 1.24 and
+their dependencies have been updated as well.
+
+#### Improvements 
+- Allow headers to be added to Prometheus requests
+  [#1757](https://github.com/fluxcd/flagger/pull/1757)
+- feat: Add support for primary backend cookies in session affinity (Gateway API)
+  [#1783](https://github.com/fluxcd/flagger/pull/1783)
+- Update Go dependencies
+  [#1787](https://github.com/fluxcd/flagger/pull/1787)
+- Build with Go 1.24
+  [#1784](https://github.com/fluxcd/flagger/pull/1784)
+- Add support for Knative
+  [#1682](https://github.com/fluxcd/flagger/pull/1682)
+- chart: add support for deploymentLabels
+  [#1707](https://github.com/fluxcd/flagger/pull/1707)
+- chart: add support for deploymentLabels
+  [#1707](https://github.com/fluxcd/flagger/pull/1707)
+- feat: add option to generate headless services
+  [#1755](https://github.com/fluxcd/flagger/pull/1755)
+
+#### Fixes
+- Fix: Do not evaluate incomplete samples from Datadog
+  [#1763](https://github.com/fluxcd/flagger/pull/1763)
+- Prevent primary HPA collision for KEDA scaled objects when migrating from an HPA
+  [#1677](https://github.com/fluxcd/flagger/pull/1677)
+
+## 1.40.0
+
+**Release date:** 2024-12-17
+
+This release comes with support for Splunk Observability (formerly SignalFx) as a metrics provider.
+For more information on how to write `MetricTemplates` for Splunk, please see the
+[Splunk metrics tutorial](https://docs.flagger.app/usage/metrics#s#splunk).
+
+Starting with this version, Flagger is compatible with the
+[AWS Gateway API Controller](https://www.gateway-api-controller.eks.aws.dev/latest/).
+
+Both Flagger and the load tester Go dependencies have been updated to fix various CVEs.
+
+#### Improvements
+- Add Splunk as a metrics provider
+  [#1733](https://github.com/fluxcd/flagger/pull/1733)
+- Preserve HTTPRoute annotations injected by AWS Gateway API
+  [#1746](https://github.com/fluxcd/flagger/pull/1746)
+- Automate `zz_generated.deepcopy.go` updates with make codegen
+  [#1735](https://github.com/fluxcd/flagger/pull/1735)
+- Update dependencies
+  [#1744](https://github.com/fluxcd/flagger/pull/1744)
+
+## 1.39.0
+
+**Release date:** 2024-11-26
+
+This release comes with fixes and improvements. There is a new
+`.spec.analysis.webhooks[].disableTLS` field which disables TLS verification
+for that webhook request.
+A bug in the Gateway API provider was fixed which could lead to unecessary restarts.
+
+This release is built with Go 1.23. Lastly, all Go dependencies, Alpine and
+Kubernetes libraries were updated.
+
+#### Improvements
+- Add validation for `primaryScalerReplicas` field in the CRD
+  [#1702](https://github.com/fluxcd/flagger/pull/1702)
+- feat: add `disableTLS` option for webhooks request
+  [#1709](https://github.com/fluxcd/flagger/pull/1709)
+- Update dependencies to Kubernetes v1.31.3
+  [#1723](https://github.com/fluxcd/flagger/pull/1723)
+- Update generated client for Kubernetes 1.31
+  [#1725](https://github.com/fluxcd/flagger/pull/1725)
+- Build with Go 1.23
+  [#1726](https://github.com/fluxcd/flagger/pull/1726)
+
+#### Fixes
+- Gateway API: Sort header filters to avoid canary restarts
+  [#1713](https://github.com/fluxcd/flagger/pull/1713)
+- fix: fix codegen script and update generated code
+  [#1724](https://github.com/fluxcd/flagger/pull/1724)
+- fix(helm): podinfo fails to create the hpa object
+  [#1721](https://github.com/fluxcd/flagger/pull/1721)
+
+## 1.38.0
+
+**Release date:** 2024-07-30
+
+This release comes with several fixes and improvements. There is a new [Keptn
+metrics provider](https://docs.flagger.app/usage/metrics#keptn) that can be used
+for flexible grading logic and analysis.
+The loadtester chart now supports ServiceAccount annotations and the Flagger
+chart now supports specifying `honorLabels` for the PodMonitor.
+
+Support for Kuma has been fixed and verified against Kuma 2.7.5. Also, the
+Deployment scaling has been updated to use `Patch` instead of `Update` to avoid
+intermittent conflict errors. Furthermore, a potential panic that could be
+caused due to Prometheus returning a range vector has been fixed. Also, the
+`request-duration` inbuilt query for Nginx has been updated to be more accurate.
+
+Lastly, all Go dependencies, Alpine and Kubernetes libraries were updated.
+
+#### Important
+
+The update to Kubernetes libraries also brings an unwanted side-effect. Due to
+a change in upstream Kubernetes, sidecar support is done through a new field,
+which may be utilized by other services in your cluster. This would change the
+hash calculated by Flagger between runs and trigger an unwanted Canary
+analysis. Unfortunately, this is unavoidable. To get around this, users could
+set the `.spec.suspend` field to be true before updating to this version and
+switch it back when they update their application.
+
+#### Improvements
+- Bumps golang.org/x/net to v0.23.0
+  [#1628](https://github.com/fluxcd/flagger/pull/1628)
+- feat: implement a Keptn metrics provider
+  [#1630](https://github.com/fluxcd/flagger/pull/1630)
+- Update dependencies to Kubernetes 1.30
+  [#1638](https://github.com/fluxcd/flagger/pull/1638)
+- loadtester: add support for annotation on service account
+  [#1649](https://github.com/fluxcd/flagger/pull/1649)
+- Bump golang.org/x/net to v0.25.0 and other deps.
+  [#1653](https://github.com/fluxcd/flagger/pull/1653)
+- Update Go dependencies and Alpine
+  [#1656](https://github.com/fluxcd/flagger/pull/1656)
+- Helm - Add podMonitor.honor labels
+  [#1676](https://github.com/fluxcd/flagger/pull/1676)
+- kuma: bump e2e version to 2.7.5
+  [#1683](https://github.com/fluxcd/flagger/pull/1683)
+- Release loadtester 0.33.0
+  [#1690](https://github.com/fluxcd/flagger/pull/1690)
+- Bump google.golang.org/grpc from 1.64.0 to 1.64.1
+  [#1675](https://github.com/fluxcd/flagger/pull/1675)
+
+#### Fixes
+- Use `Patch` instead of `Update` for Deployment scaling
+  [#1634](https://github.com/fluxcd/flagger/pull/1634)
+- block panic when prom returns range vector
+  [#1637](https://github.com/fluxcd/flagger/pull/1637)
+- Fix removal of empty keys from flagger chart
+  [#1657](https://github.com/fluxcd/flagger/pull/1657)
+- doc: fix KEDA doc regarding namespaces
+  [#1666](https://github.com/fluxcd/flagger/pull/1666)
+- Fix Nginx request-duration query
+  [#1686](https://github.com/fluxcd/flagger/pull/1686)
+
 ## 1.37.0
 
 **Release date:** 2024-03-26
@@ -409,7 +574,7 @@ routed to the canary workload pods.
 
 **Release date:** 2022-12-15
 
-This release comes with support for Apachae APISIX. For more details see the
+This release comes with support for Apache APISIX. For more details see the
 [tutorial](https://fluxcd.io/flagger/tutorials/apisix-progressive-delivery).
 
 #### Improvements
