@@ -19,7 +19,7 @@ limitations under the License.
 package externalversions
 
 import (
-	"fmt"
+	fmt "fmt"
 
 	v2 "github.com/fluxcd/flagger/pkg/apis/apisix/v2"
 	v1beta1 "github.com/fluxcd/flagger/pkg/apis/appmesh/v1beta1"
@@ -141,7 +141,7 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	case v1alpha3.SchemeGroupVersion.WithResource("trafficsplits"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Split().V1alpha3().TrafficSplits().Informer()}, nil
 
-		// Group=traefik.containo.us, Version=v1alpha1
+		// Group=traefik.io, Version=v1alpha1
 	case traefikv1alpha1.SchemeGroupVersion.WithResource("traefikservices"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Traefik().V1alpha1().TraefikServices().Informer()}, nil
 

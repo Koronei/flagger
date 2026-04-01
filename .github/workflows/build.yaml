@@ -19,18 +19,18 @@ jobs:
       labels: ubuntu-latest-16-cores
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: 1.24.x
+          go-version: 1.25.x
           cache-dependency-path: |
             **/go.sum
             **/go.mod
       - name: Download modules
         run: |
           go mod download
-          go install golang.org/x/tools/cmd/goimports
+          go install golang.org/x/tools/cmd/goimports@latest
       - name: Run linters
         run: make fmt test-codegen
       - name: Verify CRDs

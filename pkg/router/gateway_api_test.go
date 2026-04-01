@@ -23,14 +23,17 @@ import (
 	"testing"
 	"time"
 
-	flaggerv1 "github.com/fluxcd/flagger/pkg/apis/flagger/v1beta1"
-	v1 "github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1"
-	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+
+	flaggerv1 "github.com/fluxcd/flagger/pkg/apis/flagger/v1beta1"
+	v1 "github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1"
+	istiov1alpha1 "github.com/fluxcd/flagger/pkg/apis/istio/common/v1alpha1"
+	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
 )
 
 func TestGatewayAPIRouter_Reconcile(t *testing.T) {
@@ -99,8 +102,14 @@ func TestGatewayAPIRouter_Routes(t *testing.T) {
 		cookieKey := "flagger-cookie"
 		// enable session affinity and start canary run
 		canary.Spec.Analysis.SessionAffinity = &flaggerv1.SessionAffinity{
-			CookieName: cookieKey,
-			MaxAge:     300,
+			CookieName:  cookieKey,
+			Domain:      "flagger.app",
+			HttpOnly:    true,
+			MaxAge:      300,
+			Partitioned: true,
+			Path:        "/app",
+			SameSite:    "Strict",
+			Secure:      true,
 		}
 		_, pSvcName, cSvcName := canary.GetServiceNames()
 
@@ -137,10 +146,18 @@ func TestGatewayAPIRouter_Routes(t *testing.T) {
 			if string(backendRef.Name) == cSvcName {
 				found = true
 				filter := backendRef.Filters[0]
+				val := filter.ResponseHeaderModifier.Add[0].Value
 				assert.Equal(t, filter.Type, v1.HTTPRouteFilterResponseHeaderModifier)
 				assert.NotNil(t, filter.ResponseHeaderModifier)
 				assert.Equal(t, string(filter.ResponseHeaderModifier.Add[0].Name), setCookieHeader)
-				assert.Equal(t, filter.ResponseHeaderModifier.Add[0].Value, fmt.Sprintf("%s; %s=%d", canary.Status.SessionAffinityCookie, maxAgeAttr, 300))
+				assert.True(t, strings.HasPrefix(val, cookieKey))
+				assert.True(t, strings.Contains(val, "Domain=flagger.app"))
+				assert.True(t, strings.Contains(val, "HttpOnly"))
+				assert.True(t, strings.Contains(val, "Max-Age=300"))
+				assert.True(t, strings.Contains(val, "Partitioned"))
+				assert.True(t, strings.Contains(val, "Path=/app"))
+				assert.True(t, strings.Contains(val, "SameSite=Strict"))
+				assert.True(t, strings.Contains(val, "Secure"))
 				assert.Equal(t, *backendRef.Weight, int32(10))
 			}
 			if string(backendRef.Name) == pSvcName {
@@ -193,10 +210,18 @@ func TestGatewayAPIRouter_Routes(t *testing.T) {
 			if string(backendRef.Name) == cSvcName {
 				found = true
 				filter := backendRef.Filters[0]
+				val := filter.ResponseHeaderModifier.Add[0].Value
 				assert.Equal(t, filter.Type, v1.HTTPRouteFilterResponseHeaderModifier)
 				assert.NotNil(t, filter.ResponseHeaderModifier)
 				assert.Equal(t, string(filter.ResponseHeaderModifier.Add[0].Name), setCookieHeader)
-				assert.Equal(t, filter.ResponseHeaderModifier.Add[0].Value, fmt.Sprintf("%s; %s=%d", canary.Status.SessionAffinityCookie, maxAgeAttr, 300))
+				assert.True(t, strings.HasPrefix(val, cookieKey))
+				assert.True(t, strings.Contains(val, "Domain=flagger.app"))
+				assert.True(t, strings.Contains(val, "HttpOnly"))
+				assert.True(t, strings.Contains(val, "Max-Age=300"))
+				assert.True(t, strings.Contains(val, "Partitioned"))
+				assert.True(t, strings.Contains(val, "Path=/app"))
+				assert.True(t, strings.Contains(val, "SameSite=Strict"))
+				assert.True(t, strings.Contains(val, "Secure"))
 
 				assert.Equal(t, *backendRef.Weight, int32(50))
 			}
@@ -515,4 +540,170 @@ func TestGatewayAPIRouter_makeFilters(t *testing.T) {
 		)
 		assert.Equal(t, "", filtersDiff)
 	}
+}
+
+func TestGatewayAPIRouter_makeFilters_CORS(t *testing.T) {
+	canary := newTestGatewayAPICanary()
+	mocks := newFixture(canary)
+
+	// Configure CORS policy
+	canary.Spec.Service.CorsPolicy = &istiov1beta1.CorsPolicy{
+		AllowOrigins:     []*istiov1alpha1.StringMatch{{Regex: ".*example.com"}}, // ignored
+		AllowOrigin:      []string{"https://example.com", "https://app.example.com"},
+		AllowMethods:     []string{"GET", "POST", "PUT"},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"X-Custom-Header"},
+		AllowCredentials: true,
+		MaxAge:           "24h",
+	}
+
+	router := &GatewayAPIRouter{
+		gatewayAPIClient: mocks.meshClient,
+		kubeClient:       mocks.kubeClient,
+		logger:           mocks.logger,
+	}
+
+	filters := router.makeFilters(canary)
+
+	// Find the CORS filter
+	var corsFilter *v1.HTTPRouteFilter
+	for i := range filters {
+		if filters[i].Type == v1.HTTPRouteFilterCORS {
+			corsFilter = &filters[i]
+			break
+		}
+	}
+
+	require.NotNil(t, corsFilter, "CORS filter should be present")
+	require.NotNil(t, corsFilter.CORS, "CORS configuration should not be nil")
+
+	// Assert AllowOrigins
+	assert.Len(t, corsFilter.CORS.AllowOrigins, 2)
+	assert.Equal(t, v1.CORSOrigin("https://example.com"), corsFilter.CORS.AllowOrigins[0])
+	assert.Equal(t, v1.CORSOrigin("https://app.example.com"), corsFilter.CORS.AllowOrigins[1])
+
+	// Assert AllowMethods
+	assert.Len(t, corsFilter.CORS.AllowMethods, 3)
+	assert.Equal(t, v1.HTTPMethodWithWildcard("GET"), corsFilter.CORS.AllowMethods[0])
+	assert.Equal(t, v1.HTTPMethodWithWildcard("POST"), corsFilter.CORS.AllowMethods[1])
+	assert.Equal(t, v1.HTTPMethodWithWildcard("PUT"), corsFilter.CORS.AllowMethods[2])
+
+	// Assert AllowHeaders
+	assert.Len(t, corsFilter.CORS.AllowHeaders, 2)
+	assert.Equal(t, v1.HTTPHeaderName("Content-Type"), corsFilter.CORS.AllowHeaders[0])
+	assert.Equal(t, v1.HTTPHeaderName("Authorization"), corsFilter.CORS.AllowHeaders[1])
+
+	// Assert ExposeHeaders
+	assert.Len(t, corsFilter.CORS.ExposeHeaders, 1)
+	assert.Equal(t, v1.HTTPHeaderName("X-Custom-Header"), corsFilter.CORS.ExposeHeaders[0])
+
+	// Assert AllowCredentials
+	require.NotNil(t, corsFilter.CORS.AllowCredentials)
+	assert.True(t, *corsFilter.CORS.AllowCredentials)
+
+	// Assert MaxAge (24h = 86400 seconds)
+	assert.Equal(t, int32(86400), corsFilter.CORS.MaxAge)
+}
+
+func TestGatewayAPIRouter_GetRoutes(t *testing.T) {
+	canary := newTestGatewayAPICanary()
+	mocks := newFixture(canary)
+	router := &GatewayAPIRouter{
+		gatewayAPIClient: mocks.meshClient,
+		kubeClient:       mocks.kubeClient,
+		logger:           mocks.logger,
+	}
+
+	httpRoute := &v1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "podinfo",
+			Generation: 1,
+		},
+		Spec: v1.HTTPRouteSpec{
+			Rules: []v1.HTTPRouteRule{
+				{
+					BackendRefs: []v1.HTTPBackendRef{
+						{
+							BackendRef: v1.BackendRef{
+								BackendObjectReference: v1.BackendObjectReference{
+									Name: "podinfo-canary",
+								},
+								Weight: ptr.To(int32(10)),
+							},
+						},
+						{
+							BackendRef: v1.BackendRef{
+								BackendObjectReference: v1.BackendObjectReference{
+									Name: "podinfo-primary",
+								},
+								Weight: ptr.To(int32(90)),
+							},
+						},
+					},
+				},
+			},
+			CommonRouteSpec: v1.CommonRouteSpec{
+				ParentRefs: []v1.ParentReference{
+					{
+						Name: "podinfo",
+					},
+				},
+			},
+		},
+	}
+	httpRoute, err := router.gatewayAPIClient.GatewayapiV1().HTTPRoutes("default").Create(context.TODO(), httpRoute, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	t.Run("httproute generation", func(t *testing.T) {
+		httpRoute.ObjectMeta.Generation = 5
+		httpRoute.Status.Parents = []v1.RouteParentStatus{
+			{
+				ParentRef: v1.ParentReference{
+					Name:        "podinfo",
+					SectionName: ptr.To(v1.SectionName("https")),
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:               string(v1.RouteConditionAccepted),
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: 1,
+					},
+				},
+			},
+			{
+				ParentRef: v1.ParentReference{
+					Name: "podinfo",
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:               string(v1.RouteConditionAccepted),
+						Status:             metav1.ConditionFalse,
+						ObservedGeneration: 4,
+					},
+				},
+			},
+		}
+		httpRoute, err := router.gatewayAPIClient.GatewayapiV1().HTTPRoutes("default").Update(context.TODO(), httpRoute, metav1.UpdateOptions{})
+		require.NoError(t, err)
+
+		_, _, _, err = router.GetRoutes(canary)
+		require.Error(t, err)
+
+		httpRoute.Status.Parents[1].Conditions[0].ObservedGeneration = 5
+		_, err = router.gatewayAPIClient.GatewayapiV1().HTTPRoutes("default").Update(context.TODO(), httpRoute, metav1.UpdateOptions{})
+		require.NoError(t, err)
+
+		_, _, _, err = router.GetRoutes(canary)
+		require.Error(t, err)
+
+		httpRoute.Status.Parents[1].Conditions[0].Status = metav1.ConditionTrue
+		_, err = router.gatewayAPIClient.GatewayapiV1().HTTPRoutes("default").Update(context.TODO(), httpRoute, metav1.UpdateOptions{})
+		require.NoError(t, err)
+
+		primaryWeight, canaryWeight, mirrored, err := router.GetRoutes(canary)
+		require.NoError(t, err)
+		assert.Equal(t, 90, primaryWeight)
+		assert.Equal(t, 10, canaryWeight)
+		assert.False(t, mirrored)
+	})
 }

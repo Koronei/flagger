@@ -3,11 +3,11 @@
 Flagger can run automated application analysis, promotion and rollback for the following deployment strategies:
 
 * **Canary Release** \(progressive traffic shifting\)
-  * Istio, Linkerd, App Mesh, NGINX, Skipper, Contour, Gloo Edge, Traefik, Open Service Mesh, Kuma, Gateway API, Apache APISIX, Knative
+  * Istio, Linkerd, App Mesh, NGINX, Skipper, Contour, Gloo Edge, Traefik, Kuma, Gateway API, Apache APISIX, Knative
 * **A/B Testing** \(HTTP headers and cookies traffic routing\)
   * Istio, App Mesh, NGINX, Contour, Gloo Edge, Gateway API
 * **Blue/Green** \(traffic switching\)
-  * Kubernetes CNI, Istio, Linkerd, App Mesh, NGINX, Contour, Gloo Edge, Open Service Mesh, Gateway API
+  * Kubernetes CNI, Istio, Linkerd, App Mesh, NGINX, Contour, Gloo Edge, Gateway API
 * **Blue/Green Mirroring** \(traffic shadowing\)
   * Istio, Gateway API
 * **Canary Release with Session Affinity** \(progressive traffic shifting combined with cookie based routing\)
@@ -474,7 +474,7 @@ can also configure stickiness for the Primary deployment. You can configure this
       primaryCookieName: primary-flagger-cookie
 ```
 
-> Note: This is only supported for the Gateway API provider for now.
+> Note: This is only supported for the Gateway API and Istio providers for now.
 
 Let's understand what the above configuration does. All the session affinity stuff in the above section
 still occurs, but now the response header for requests routed to the primary deployment also include a
@@ -494,3 +494,38 @@ then all subsequent requests will be routed to the same until the next step star
 value is generated which is then included in the headers of responses from the primary workload. This allows for
 weighted traffic routing to happen while ensuring that users don't ever switch back to the primary deployment from
 the canary deployment during a Canary analysis.
+
+### Configuring additional cookie attributes
+
+Depending on your use case, you may neet to set additional [cookie attributes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie#attributes) in order for your application to route requests correctly.
+You may set the following attributes:
+
+```yaml
+  analysis:
+    # schedule interval (default 60s)
+    interval: 1m
+    sessionAffinity:
+      # name of the cookie used
+      cookieName: flagger-cookie
+      # max age of the cookie (in seconds)
+      # optional; defaults to 86400
+      maxAge: 21600
+      # defines the host to which the cookie will be sent.
+      # optional
+      domain: fluxcd.io
+      # forbids JavaScript from accessing the cookie, for example, through the Document.cookie property.
+      # optional
+      httpOnly: true
+      # indicates that the cookie should be stored using partitioned storage.
+      # optional
+      partitioned: true
+      # indicates the path that must exist in the requested URL for the browser to send the Cookie header.
+      # optional
+      path: /flagger
+      # controls whether or not a cookie is sent with cross-site requests.
+      # optional; valid values are Strict, Lax or None
+      sameSite: Strict
+      # indicates that the cookie is sent to the server only when a request is made with the https: scheme (except on localhost)
+      # optional
+      secure: true
+```

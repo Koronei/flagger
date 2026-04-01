@@ -273,6 +273,26 @@ func (gwr *GatewayAPIRouter) GetRoutes(canary *flaggerv1.Canary) (
 		err = fmt.Errorf("HTTPRoute %s.%s get error: %w", apexSvcName, hrNamespace, err)
 		return
 	}
+
+	currentGeneration := httpRoute.GetGeneration()
+	for _, parentRef := range httpRoute.Spec.CommonRouteSpec.ParentRefs {
+		for _, parentStatus := range httpRoute.Status.Parents {
+			if !reflect.DeepEqual(parentStatus.ParentRef, parentRef) {
+				continue
+			}
+
+			for _, condition := range parentStatus.Conditions {
+				if condition.Type == string(v1.RouteConditionAccepted) && (condition.Status != metav1.ConditionTrue || condition.ObservedGeneration < currentGeneration) {
+					err = fmt.Errorf(
+						"HTTPRoute %s.%s parent %s is not ready (status: %s, observed generation: %d, current generation: %d)",
+						apexSvcName, hrNamespace, parentRef.Name, string(condition.Status), condition.ObservedGeneration, currentGeneration,
+					)
+					return 0, 0, false, err
+				}
+			}
+		}
+	}
+
 	var weightedRule *v1.HTTPRouteRule
 	for _, rule := range httpRoute.Spec.Rules {
 		// If session affinity is enabled, then we are only interested in the rule
@@ -472,7 +492,10 @@ func (gwr *GatewayAPIRouter) getSessionAffinityRouteRules(canary *flaggerv1.Cana
 		if canary.Status.SessionAffinityCookie == "" {
 			canary.Status.SessionAffinityCookie = fmt.Sprintf("%s=%s", canary.Spec.Analysis.SessionAffinity.CookieName, randSeq())
 		}
-		primaryCookie := fmt.Sprintf("%s=%s", canary.Spec.Analysis.SessionAffinity.PrimaryCookieName, randSeq())
+		// if the status doesn't have the primary cookie, then generate a new primary cookie.
+		if canary.Status.PrimarySessionAffinityCookie == "" {
+			canary.Status.PrimarySessionAffinityCookie = fmt.Sprintf("%s=%s", canary.Spec.Analysis.SessionAffinity.PrimaryCookieName, randSeq())
+		}
 
 		// add response modifier to the canary backend ref in the rule that does weighted routing
 		// to include the canary cookie.
@@ -482,10 +505,8 @@ func (gwr *GatewayAPIRouter) getSessionAffinityRouteRules(canary *flaggerv1.Cana
 			ResponseHeaderModifier: &v1.HTTPHeaderFilter{
 				Add: []v1.HTTPHeader{
 					{
-						Name: setCookieHeader,
-						Value: fmt.Sprintf("%s; %s=%d", canary.Status.SessionAffinityCookie, maxAgeAttr,
-							canary.Spec.Analysis.SessionAffinity.GetMaxAge(),
-						),
+						Name:  setCookieHeader,
+						Value: canary.Spec.Analysis.SessionAffinity.BuildCookie(canary.Status.SessionAffinityCookie, canary.Spec.Analysis.SessionAffinity.GetMaxAge()),
 					},
 				},
 			},
@@ -504,10 +525,8 @@ func (gwr *GatewayAPIRouter) getSessionAffinityRouteRules(canary *flaggerv1.Cana
 				ResponseHeaderModifier: &v1.HTTPHeaderFilter{
 					Add: []v1.HTTPHeader{
 						{
-							Name: setCookieHeader,
-							Value: fmt.Sprintf("%s; %s=%d", primaryCookie, maxAgeAttr,
-								int(interval.Seconds()),
-							),
+							Name:  setCookieHeader,
+							Value: canary.Spec.Analysis.SessionAffinity.BuildCookie(canary.Status.PrimarySessionAffinityCookie, int(interval.Seconds())),
 						},
 					},
 				},
@@ -548,7 +567,7 @@ func (gwr *GatewayAPIRouter) getSessionAffinityRouteRules(canary *flaggerv1.Cana
 		// primary cookie and send them to the primary backend, only if a primary cookie name has
 		// been specified.
 		if canary.Spec.Analysis.SessionAffinity.PrimaryCookieName != "" {
-			cookieKeyAndVal = strings.Split(primaryCookie, "=")
+			cookieKeyAndVal = strings.Split(canary.Status.PrimarySessionAffinityCookie, "=")
 			regexMatchType = v1.HeaderMatchRegularExpression
 			primaryCookieMatch := v1.HTTPRouteMatch{
 				Headers: []v1.HTTPHeaderMatch{
@@ -841,6 +860,14 @@ func (gwr *GatewayAPIRouter) makeFilters(canary *flaggerv1.Canary) []v1.HTTPRout
 		filters = append(filters, mirrorFilter)
 	}
 
+	if canary.Spec.Service.CorsPolicy != nil {
+		corsFilter := v1.HTTPRouteFilter{
+			Type: v1.HTTPRouteFilterCORS,
+			CORS: gwr.toV1CORSFilter(canary.Spec.Service.CorsPolicy),
+		}
+		filters = append(filters, corsFilter)
+	}
+
 	return filters
 }
 
@@ -854,6 +881,62 @@ func toV1RequestMirrorFilter(requestMirror v1beta1.HTTPRequestMirrorFilter) *v1.
 			Port:      (*v1.PortNumber)(requestMirror.BackendRef.Port),
 		},
 	}
+}
+
+func (gwr *GatewayAPIRouter) toV1CORSFilter(corsPolicy *istiov1beta1.CorsPolicy) *v1.HTTPCORSFilter {
+	cors := &v1.HTTPCORSFilter{}
+
+	// Note: CorsPolicy.AllowOrigins (StringMatch patterns) is not mapped because
+	// Gateway API HTTPCORSFilter.AllowOrigins only supports simple origin strings,
+	if len(corsPolicy.AllowOrigins) > 0 {
+		gwr.logger.Errorf("'corsPolicy.allowOrigins' is not supported by Gateway API, use 'corsPolicy.allowOrigin' instead")
+	}
+
+	// Map AllowOrigin to AllowOrigins
+	// not pattern matching like Istio's StringMatch type.
+	if len(corsPolicy.AllowOrigin) > 0 {
+		for _, origin := range corsPolicy.AllowOrigin {
+			cors.AllowOrigins = append(cors.AllowOrigins, v1.CORSOrigin(origin))
+		}
+	}
+
+	// Map AllowMethods
+	if len(corsPolicy.AllowMethods) > 0 {
+		for _, method := range corsPolicy.AllowMethods {
+			cors.AllowMethods = append(cors.AllowMethods, v1.HTTPMethodWithWildcard(method))
+		}
+	}
+
+	// Map AllowHeaders
+	if len(corsPolicy.AllowHeaders) > 0 {
+		for _, header := range corsPolicy.AllowHeaders {
+			cors.AllowHeaders = append(cors.AllowHeaders, v1.HTTPHeaderName(header))
+		}
+	}
+
+	// Map ExposeHeaders
+	if len(corsPolicy.ExposeHeaders) > 0 {
+		for _, header := range corsPolicy.ExposeHeaders {
+			cors.ExposeHeaders = append(cors.ExposeHeaders, v1.HTTPHeaderName(header))
+		}
+	}
+
+	// Map AllowCredentials
+	if corsPolicy.AllowCredentials {
+		allow := true
+		cors.AllowCredentials = &allow
+	}
+
+	// Map MaxAge - convert duration string to seconds
+	if corsPolicy.MaxAge != "" {
+		// Parse duration string (e.g., "1d", "24h", "5s")
+		duration, err := time.ParseDuration(corsPolicy.MaxAge)
+		if err == nil {
+			cors.MaxAge = int32(duration.Seconds())
+		}
+	}
+
+	return cors
 }
 
 func toV1ParentRefs(gatewayRefs []v1beta1.ParentReference) []v1.ParentReference {

@@ -59,15 +59,6 @@ $ helm upgrade -i flagger flagger/flagger \
 ```
 
 
-To install Flagger for **Open Service Mesh** (requires OSM to have been installed with Prometheus):
-
-```console
-$ helm upgrade -i flagger flagger/flagger \
-    --namespace=osm-system \
-    --set meshProvider=osm \
-    --set metricsServer=http://osm-prometheus.osm-system.svc:7070
-```
-
 To install Flagger for **Kuma Service Mesh** (requires Kuma to have been installed with Prometheus):
 
 ```console
@@ -195,6 +186,8 @@ The following tables lists the configurable parameters of the Flagger chart and 
 | `podDisruptionBudget.minAvailable`   | The minimal number of available replicas that will be set in the PodDisruptionBudget                                                               | `1`                                   |
 | `noCrossNamespaceRefs`               | If `true`, cross namespace references to custom resources will be disabled                                                                         | `false`                               |
 | `namespace`                          | When specified, Flagger will restrict itself to watching Canary objects from that namespace                                                        | `""`                                  |
+| `additionalVolumes`                  | Extra volumes to add to the Flagger pod                                                                                                            | `[]`                                  |
+| `additionalVolumeMounts`             | Extra volume mounts to add to the Flagger container                                                                         | `[]`                                  |
 | `deploymentLabels`                   | Labels to add to Flagger deployment                                                                                                                | `{}`                                  |
 | `podLabels`                          | Labels to add to pods of Flagger deployment                                                                                                        | `{}`                                  |
 

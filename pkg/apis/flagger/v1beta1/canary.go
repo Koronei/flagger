@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1beta1"
-	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/fluxcd/flagger/pkg/apis/gatewayapi/v1beta1"
+	istiov1beta1 "github.com/fluxcd/flagger/pkg/apis/istio/v1beta1"
 )
 
 const (
@@ -33,6 +34,13 @@ const (
 	PrimaryReadyThreshold   = 100
 	CanaryReadyThreshold    = 100
 	MetricInterval          = "1m"
+)
+
+// Deployment strategies
+const (
+	DeploymentStrategyCanary    = "canary"
+	DeploymentStrategyBlueGreen = "blue-green"
+	DeploymentStrategyABTesting = "ab-testing"
 )
 
 // +genclient
@@ -74,7 +82,7 @@ type CanarySpec struct {
 
 	// AutoscalerRef references an autoscaling resource
 	// +optional
-	AutoscalerRef *AutoscalerRefernce `json:"autoscalerRef,omitempty"`
+	AutoscalerRef *AutoscalerReference `json:"autoscalerRef,omitempty"`
 
 	// Reference to NGINX ingress resource
 	// +optional
@@ -142,6 +150,11 @@ type CanaryService struct {
 	// https://kubernetes.io/docs/concepts/services-networking/service/#application-protocol
 	// +optional
 	AppProtocol string `json:"appProtocol,omitempty"`
+
+	// TrafficDistribution of the service
+	// https://kubernetes.io/docs/concepts/services-networking/service/#traffic-distribution
+	// +optional
+	TrafficDistribution string `json:"trafficDistribution,omitempty"`
 
 	// PortDiscovery adds all container ports to the generated Kubernetes service
 	PortDiscovery bool `json:"portDiscovery"`
@@ -223,6 +236,17 @@ type CanaryService struct {
 	// Canary is the metadata to add to the canary service
 	// +optional
 	Canary *CustomMetadata `json:"canary,omitempty"`
+
+	// UnmanagedMetadata is a list of metadata keys that should be ignored by Flagger.
+	// Flagger will not add, remove or change the value of these annotations.
+	// +optional
+	UnmanagedMetadata *UnmanagedMetadata `json:"unmanagedMetadata,omitempty"`
+}
+
+// UnmanagedMetadata is a list of metadata keys that should be ignored by Flagger.
+type UnmanagedMetadata struct {
+	Annotations []string `json:"annotations,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
 }
 
 // CanaryAnalysis is used to describe how the analysis should be done
@@ -290,11 +314,30 @@ type CanaryAnalysis struct {
 type SessionAffinity struct {
 	// CookieName is the key that will be used for the session affinity cookie.
 	CookieName string `json:"cookieName,omitempty"`
-	// MaxAge indicates the number of seconds until the session affinity cookie will expire.
 	// ref: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie#attributes
+	// Domain defines the host to which the cookie will be sent.
+	// +optional
+	Domain string `json:"domain,omitempty"`
+	// HttpOnly forbids JavaScript from accessing the cookie, for example, through the Document.cookie property.
+	// +optional
+	HttpOnly bool `json:"httpOnly,omitempty"`
+	// MaxAge indicates the number of seconds until the session affinity cookie will expire.
 	// The default value is 86,400 seconds, i.e. a day.
 	// +optional
 	MaxAge int `json:"maxAge,omitempty"`
+	// Partitioned indicates that the cookie should be stored using partitioned storage.
+	// +optional
+	Partitioned bool `json:"partitioned,omitempty"`
+	// Path indicates the path that must exist in the requested URL for the browser to send the Cookie header.
+	// +optional
+	Path string `json:"path,omitempty"`
+	// SameSite controls whether or not a cookie is sent with cross-site requests.
+	// +optional
+	// +kubebuilder:validation:Enum=Strict;Lax;None
+	SameSite string `json:"sameSite,omitempty"`
+	// Secure indicates that the cookie is sent to the server only when a request is made with the https: scheme (except on localhost)
+	// +optional
+	Secure bool `json:"secure,omitempty"`
 	// PrimaryCookieName is the key that will be used for the primary session affinity cookie.
 	// +optional
 	PrimaryCookieName string `json:"primaryCookieName,omitempty"`
@@ -474,7 +517,7 @@ func (l *LocalObjectReference) IsKnativeService() bool {
 	return false
 }
 
-type AutoscalerRefernce struct {
+type AutoscalerReference struct {
 	// API version of the scaler
 	// +required
 	APIVersion string `json:"apiVersion,omitempty"`
@@ -639,4 +682,58 @@ func (c *Canary) SkipAnalysis() bool {
 		return true
 	}
 	return c.Spec.SkipAnalysis
+}
+
+// DeploymentStrategy returns the deployment strategy based on canary analysis configuration
+func (c *Canary) DeploymentStrategy() string {
+	analysis := c.GetAnalysis()
+	if analysis == nil {
+		return DeploymentStrategyCanary
+	}
+
+	// A/B Testing: has match conditions and iterations
+	if len(analysis.Match) > 0 && analysis.Iterations > 0 {
+		return DeploymentStrategyABTesting
+	}
+
+	// Blue/Green: has iterations but no match conditions
+	if analysis.Iterations > 0 {
+		return DeploymentStrategyBlueGreen
+	}
+
+	// Canary Release: default (has maxWeight, stepWeight, or stepWeights)
+	return DeploymentStrategyCanary
+}
+
+// BuildCookie returns the cookie that should be used as the value of a Set-Cookie header
+func (s *SessionAffinity) BuildCookie(cookieName string, maxAge int) string {
+	cookie := fmt.Sprintf("%s; %s=%d", cookieName, "Max-Age",
+		maxAge,
+	)
+
+	if s.Domain != "" {
+		cookie += fmt.Sprintf("; %s=%s", "Domain", s.Domain)
+	}
+
+	if s.HttpOnly {
+		cookie += fmt.Sprintf("; %s", "HttpOnly")
+	}
+
+	if s.Partitioned {
+		cookie += fmt.Sprintf("; %s", "Partitioned")
+	}
+
+	if s.Path != "" {
+		cookie += fmt.Sprintf("; %s=%s", "Path", s.Path)
+	}
+
+	if s.SameSite != "" {
+		cookie += fmt.Sprintf("; %s=%s", "SameSite", s.SameSite)
+	}
+
+	if s.Secure {
+		cookie += fmt.Sprintf("; %s", "Secure")
+	}
+
+	return cookie
 }
